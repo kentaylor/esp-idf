@@ -31,6 +31,10 @@
 */
 #define EXAMPLE_WIFI_SSID CONFIG_WIFI_SSID
 #define EXAMPLE_WIFI_PASS CONFIG_WIFI_PASSWORD
+//Leds to flash
+#define led1 32
+#define led2 16
+#define TimingPin 17
 
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 static EventGroupHandle_t wifi_event_group;
@@ -47,17 +51,34 @@ static const char *TAG = "example";
  * maintains its value when ESP32 wakes from deep sleep.
  */
 RTC_DATA_ATTR static int boot_count = 0;
+/* Variable holding which led was last on.
+ * It is placed into RTC memory using RTC_DATA_ATTR and
+ * maintains its value when ESP32 wakes from deep sleep.
+ */
+static RTC_DATA_ATTR int led = led1;  // initial state
+
 
 static void obtain_time(void);
 static void initialize_sntp(void);
 static void initialise_wifi(void);
 static esp_err_t event_handler(void *ctx, system_event_t *event);
 
+uint64_t rtc_time_get(void);
 
 void app_main()
 {
+	esp_log_level_set("*", ESP_LOG_WARN);      // set all components to WARN level
+	gpio_pad_select_gpio(TimingPin);
+	/* Set the GPIO as a push/pull output */
+	gpio_set_direction(TimingPin, GPIO_MODE_OUTPUT);
+		/* Turn on (output high)*/
+	gpio_set_level(TimingPin, 1);
     ++boot_count;
-    ESP_LOGI(TAG, "Boot count: %d", boot_count);
+
+    struct timeval tv_now;
+    gettimeofday (&tv_now, NULL);
+    printf("gettimeofday: %ld.%06ld\n", tv_now.tv_sec, tv_now.tv_usec); fflush(stdout);
+    ESP_LOGW(TAG, "Boot count: %d", boot_count);
 
     time_t now;
     struct tm timeinfo;
@@ -65,29 +86,44 @@ void app_main()
     localtime_r(&now, &timeinfo);
     // Is time set? If not, tm_year will be (1970 - 1900).
     if (timeinfo.tm_year < (2016 - 1900)) {
-        ESP_LOGI(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
+        ESP_LOGW(TAG, "Time is not set yet. Connecting to WiFi and getting time over NTP.");
         obtain_time();
         // update 'now' variable with current time
         time(&now);
     }
     char strftime_buf[64];
 
-    // Set timezone to Eastern Standard Time and print local time
+    /* Set timezone to Eastern Standard Time and print local time
     setenv("TZ", "EST5EDT,M3.2.0/2,M11.1.0", 1);
     tzset();
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "The current date/time in New York is: %s", strftime_buf);
+    ESP_LOGW(TAG, "The current date/time in New York is: %s", strftime_buf);*/
 
-    // Set timezone to China Standard Time
-    setenv("TZ", "CST-8", 1);
+    // Set timezone to Canberra Standard Time
+//    setenv("TZ", "CST-8", 1);
+    setenv("TZ", "AEST-10", 1);
     tzset();
     localtime_r(&now, &timeinfo);
     strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
-    ESP_LOGI(TAG, "The current date/time in Shanghai is: %s", strftime_buf);
-
-    const int deep_sleep_sec = 10;
-    ESP_LOGI(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
+    ESP_LOGW(TAG, "The current date/time in Canberra is: %s", strftime_buf);
+    //Flash led
+    gpio_pad_select_gpio(led1);
+	gpio_pad_select_gpio(led2);
+	/* Set the GPIO as a push/pull output */
+	gpio_set_direction(led1, GPIO_MODE_OUTPUT);
+	gpio_set_direction(led2, GPIO_MODE_OUTPUT);
+	/* Blink on (output high)*/
+	gpio_set_level(led, 1);
+	ESP_LOGW(TAG, "Led value at flash start: %d", led);
+	vTaskDelay(1000 / portTICK_PERIOD_MS);
+	/* Blink off (output low) */
+	gpio_set_level(led, 0);
+    led ^= led1^led2;           // kept in RTC memory
+	//End Led flash
+    const int deep_sleep_sec = 1;
+    ESP_LOGW(TAG, "Entering deep sleep for %d seconds", deep_sleep_sec);
+    gpio_set_level(TimingPin, 0);
     esp_deep_sleep(1000000LL * deep_sleep_sec);
 }
 
@@ -105,7 +141,7 @@ static void obtain_time(void)
     int retry = 0;
     const int retry_count = 10;
     while(timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
-        ESP_LOGI(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+        ESP_LOGW(TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         time(&now);
         localtime_r(&now, &timeinfo);
@@ -116,7 +152,7 @@ static void obtain_time(void)
 
 static void initialize_sntp(void)
 {
-    ESP_LOGI(TAG, "Initializing SNTP");
+    ESP_LOGW(TAG, "Initializing SNTP");
     sntp_setoperatingmode(SNTP_OPMODE_POLL);
     sntp_setservername(0, "pool.ntp.org");
     sntp_init();
@@ -136,7 +172,7 @@ static void initialise_wifi(void)
             .password = EXAMPLE_WIFI_PASS,
         },
     };
-    ESP_LOGI(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
+    ESP_LOGW(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
     ESP_ERROR_CHECK( esp_wifi_start() );
@@ -162,3 +198,4 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
     }
     return ESP_OK;
 }
+
